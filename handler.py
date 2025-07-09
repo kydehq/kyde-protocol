@@ -1,20 +1,19 @@
 import os
 import requests
+import psycopg2 # Neue Bibliothek für PostgreSQL
 from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field # pydantic wird mit FastAPI installiert
+from pydantic import BaseModel
 
 # --- Konfiguration & Modelle ---
 
-# Wir definieren ein Modell für unsere Antwort. Das hilft bei der Dokumentation.
 class DecisionResponse(BaseModel):
     timestamp_utc: datetime
     input_soc_percent: float
     data: dict
     decision: dict
 
-# API-Schlüssel-Konfiguration für die Sicherheit
 API_KEY_NAME = "X-API-KEY"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
@@ -22,10 +21,11 @@ app = FastAPI()
 
 # --- HILFSFUNKTIONEN & KONFIGURATION ---
 
-def get_config(var_name: str, default_value: str) -> str:
-    """Holt eine Umgebungsvariable oder gibt einen Fehler zurück."""
+def get_config(var_name: str, default_value: str = None) -> str:
     value = os.environ.get(var_name)
     if value is None:
+        if default_value is None:
+            raise ValueError(f"FEHLER: Essentielle Umgebungsvariable {var_name} nicht gefunden!")
         print(f"WARNUNG: Umgebungsvariable {var_name} nicht gefunden, nutze Standardwert: {default_value}")
         return default_value
     return value
@@ -37,17 +37,43 @@ PRICE_THRESHOLD_LOW = float(get_config("PRICE_THRESHOLD_LOW", "0.05"))
 PRICE_THRESHOLD_HIGH = float(get_config("PRICE_THRESHOLD_HIGH", "0.25"))
 SOLAR_THRESHOLD_HIGH = int(get_config("SOLAR_THRESHOLD_HIGH", "300"))
 INTERNAL_API_KEY = get_config("INTERNAL_API_KEY", "ein-sehr-geheimes-passwort")
+DATABASE_URL = get_config("DATABASE_URL") # Diese Variable wird von Railway automatisch bereitgestellt!
 
+def setup_database():
+    """Erstellt die Tabelle, falls sie noch nicht existiert."""
+    conn = None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS decisions (
+                id SERIAL PRIMARY KEY,
+                timestamp_utc TIMESTAMPTZ NOT NULL,
+                grid_price REAL,
+                solar_forecast_w_m2 TEXT,
+                input_soc REAL,
+                decision_action VARCHAR(50),
+                decision_reason TEXT
+            );
+        """)
+        conn.commit()
+        cursor.close()
+        print("Datenbank-Tabelle 'decisions' ist bereit.")
+    except Exception as e:
+        print(f"Fehler beim Einrichten der Datenbank: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+# Führe das DB-Setup beim Start der App einmal aus
+setup_database()
 
 async def get_api_key(api_key: str = Security(api_key_header)):
-    """Überprüft den mitgesendeten API-Schlüssel."""
     if api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=403, detail="Ungültiger oder fehlender API-Schlüssel")
 
-# --- DATENABRUF-FUNKTIONEN ---
-
+# --- DATENABRUF-FUNKTIONEN (unverändert) ---
 def get_epex_spot_price():
-    # ... (Funktion bleibt unverändert)
     api_url = 'https://api.awattar.de/v1/marketdata'
     try:
         response = requests.get(api_url, timeout=10)
@@ -59,11 +85,9 @@ def get_epex_spot_price():
             if start_time.hour == now_utc.hour and start_time.date() == now_utc.date():
                 return price_point['marketprice'] / 1000
         return None
-    except Exception:
-        return None
+    except Exception: return None
 
 def get_solar_forecast():
-    # ... (Funktion nutzt jetzt die Konfigurationsvariablen)
     api_url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&hourly=shortwave_radiation&forecast_days=1"
     try:
         response = requests.get(api_url, timeout=10)
@@ -71,17 +95,12 @@ def get_solar_forecast():
         data = response.json()
         now_hour = datetime.now(timezone.utc).hour
         return data['hourly']['shortwave_radiation'][now_hour : now_hour + 6]
-    except Exception:
-        return None
+    except Exception: return None
 
-# --- DER GESICHERTE API-ENDPUNKT ---
+# --- DER GESICHERTE API-ENDPUNKT (mit DB-Logging) ---
 
 @app.get("/entscheidung", response_model=DecisionResponse)
 async def get_charging_decision(soc: float, api_key: str = Security(get_api_key)):
-    """
-    Dieser Endpunkt wird von der Tuya-Cloud aufgerufen.
-    Er nimmt den aktuellen Batteriestand (SoC) entgegen und ist durch einen API-Schlüssel geschützt.
-    """
     if not (0.0 <= soc <= 100.0):
         raise HTTPException(status_code=400, detail="SoC muss zwischen 0 und 100 liegen.")
 
@@ -89,48 +108,54 @@ async def get_charging_decision(soc: float, api_key: str = Security(get_api_key)
     solar_forecast = get_solar_forecast()
 
     if grid_price is None or solar_forecast is None:
-        raise HTTPException(status_code=503, detail="Externe Daten (Strompreis/Wetter) konnten nicht abgerufen werden.")
+        raise HTTPException(status_code=503, detail="Externe Daten konnten nicht abgerufen werden.")
 
-    # --- VERBESSERTE ENTSCHEIDUNGS-LOGIK ---
+    # --- ENTSCHEIDUNGS-LOGIK (unverändert) ---
     decision = "DO_NOTHING"
     reason = "Standard: Keine Aktion nötig."
     next_3h_solar = sum(solar_forecast[0:3])
-
-    # Priorität 1: Sicherheitsregeln
     if soc < 10:
         decision = "CHARGE_FROM_GRID"
         reason = "Sicherheit: Batterie fast leer, laden um Tiefentladung zu verhindern."
     elif soc > 98:
         decision = "DO_NOTHING"
         reason = "Sicherheit: Batterie fast voll, Ladevorgang gestoppt."
-    
-    # Priorität 2: Auf Gelegenheiten reagieren (nur wenn keine Sicherheitsregel greift)
     else:
-        # Regel A: Extrem billiger Strom -> Immer laden (wenn nicht voll)
         if grid_price <= PRICE_THRESHOLD_LOW and soc < 95:
             decision = "CHARGE_FROM_GRID"
             reason = f"Gelegenheit: Netzpreis ist extrem niedrig ({grid_price:.4f} EUR/kWh)."
-        
-        # Regel B: Viel Sonne kommt -> Warten, nicht aus dem Netz laden
         elif soc < 80 and next_3h_solar > SOLAR_THRESHOLD_HIGH:
             decision = "WAIT_FOR_SOLAR"
             reason = f"Strategie: Es wird bald genug Solarstrom erwartet (Index: {next_3h_solar})."
-            
-        # Regel C: Teurer Strom -> Entladen
         elif grid_price >= PRICE_THRESHOLD_HIGH and soc > 20:
             decision = "DISCHARGE_TO_HOUSE"
             reason = f"Kosten sparen: Netzpreis ist hoch ({grid_price:.4f} EUR/kWh), Batterie wird genutzt."
 
+    # --- NEU: DATEN IN DIE DATENBANK SCHREIBEN ---
+    conn = None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO decisions (timestamp_utc, grid_price, solar_forecast_w_m2, input_soc, decision_action, decision_reason)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (datetime.now(timezone.utc), grid_price, str(solar_forecast), soc, decision, reason)
+        )
+        conn.commit()
+        cursor.close()
+        print("Entscheidung erfolgreich in der Datenbank protokolliert.")
+    except Exception as e:
+        print(f"Fehler beim Schreiben in die Datenbank: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    # --- ANTWORT ZURÜCKGEBEN (unverändert) ---
     return {
         "timestamp_utc": datetime.now(timezone.utc),
         "input_soc_percent": soc,
-        "data": {
-            "grid_price_eur_per_kwh": grid_price,
-            "next_6h_solar_radiation_w_per_m2": solar_forecast
-        },
-        "decision": {
-            "action": decision,
-            "reason": reason
-        }
+        "data": { "grid_price_eur_per_kwh": grid_price, "next_6h_solar_radiation_w_per_m2": solar_forecast },
+        "decision": { "action": decision, "reason": reason }
     }
-
