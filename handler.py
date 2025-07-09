@@ -1,75 +1,113 @@
 import os
-import json
 import requests
+from fastapi import FastAPI, HTTPException
 from datetime import datetime, timezone
 
+# Wir initialisieren die FastAPI-App
+# Das ist unser dauerhaft laufender Server
+app = FastAPI()
+
+# --- DATENABRUF-FUNKTIONEN ---
+# Test-Kommentar
+
 def get_epex_spot_price():
-    """
-    Fragt die aktuellen EPEX Spot Day-Ahead Preise für Deutschland/Österreich
-    über die kostenlose aWATTar API ab.
-    """
+    """Fragt den aktuellen stündlichen EPEX Spot Preis ab."""
     api_url = 'https://api.awattar.de/v1/marketdata'
     try:
         response = requests.get(api_url, timeout=10)
         response.raise_for_status()
         market_data = response.json()['data']
         now_utc = datetime.now(timezone.utc)
-
         for price_point in market_data:
             start_time = datetime.fromtimestamp(price_point['start_timestamp'] / 1000, tz=timezone.utc)
-            end_time = datetime.fromtimestamp(price_point['end_timestamp'] / 1000, tz=timezone.utc)
-
-            if start_time <= now_utc < end_time:
+            if start_time.hour == now_utc.hour and start_time.date() == now_utc.date():
                 price_eur_per_kwh = price_point['marketprice'] / 1000
-                print(f"Erfolgreich von aWATTar abgerufen. Aktueller Preis: {price_eur_per_kwh:.4f} EUR/kWh")
-                return {'price_eur_per_kwh': price_eur_per_kwh}
-
-        print("Konnte keinen gültigen Preis für die aktuelle Stunde finden.")
-        return None
+                return price_eur_per_kwh
+        return None # Falls kein Preis gefunden wurde
     except Exception as e:
-        print(f"Fehler bei der Anfrage an die aWATTar API: {e}")
+        print(f"Fehler bei aWATTar API: {e}")
         return None
 
-def main():
+def get_solar_forecast():
     """
-    Hauptfunktion, die den gesamten Prozess steuert.
+    Fragt eine Solar-Wettervorhersage von Open-Meteo ab.
+    KOSTENLOS UND OHNE API-KEY!
+    Wir fragen die Strahlung für die nächsten 6 Stunden ab.
+    Ein Wert > 100 W/m² ist gut, > 500 W/m² ist sehr gut.
     """
-    print("Starte stündlichen Preis-Check...")
+    # Beispiel-Koordinaten für Frankfurt, Deutschland. Diese sollten konfigurierbar sein.
+    latitude = 50.1109
+    longitude = 8.6821
+    api_url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&hourly=shortwave_radiation&forecast_days=1"
+    
+    try:
+        response = requests.get(api_url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Finde die aktuelle Stunde und die nächsten 5 Stunden
+        now_hour = datetime.now(timezone.utc).hour
+        # Die Strahlungswerte für die nächsten 6 Stunden
+        upcoming_radiation = data['hourly']['shortwave_radiation'][now_hour : now_hour + 6]
+        return upcoming_radiation
+    except Exception as e:
+        print(f"Fehler bei Open-Meteo API: {e}")
+        return None
 
-    # --- 1. Konfiguration aus Umgebungsvariablen lesen ---
-    # Diese werden wir später in Railway eintragen
-    # tuya_client_id = os.environ.get('TUYA_CLIENT_ID')
-    # tuya_client_secret = os.environ.get('TUYA_CLIENT_SECRET')
-    # device_id = os.environ.get('DEVICE_ID')
+# --- DER API-ENDPUNKT ---
 
-    # if not all([tuya_client_id, tuya_client_secret, device_id]):
-    #     print("Fehler: Nicht alle TUYA-Umgebungsvariablen sind gesetzt. Abbruch.")
-    #     return
+@app.get("/entscheidung")
+async def get_charging_decision(soc: float):
+    """
+    Dieser Endpunkt wird von der Tuya-Cloud aufgerufen.
+    Er nimmt den aktuellen Batteriestand (State of Charge, SoC) in Prozent entgegen.
+    Beispielaufruf: https://dein-dienst.railway.app/entscheidung?soc=55.5
+    """
+    if not (0.0 <= soc <= 100.0):
+        raise HTTPException(status_code=400, detail="SoC muss zwischen 0 und 100 liegen.")
 
-    # print("Tuya-Konfiguration erfolgreich geladen.")
+    # 1. Alle benötigten Daten abrufen
+    grid_price = get_epex_spot_price()
+    solar_forecast = get_solar_forecast()
 
-    # --- 2. Aktuellen Strompreis abfragen ---
-    current_price_info = get_epex_spot_price()
+    if grid_price is None or solar_forecast is None:
+        raise HTTPException(status_code=503, detail="Externe Daten konnten nicht abgerufen werden.")
 
-    if not current_price_info:
-        print("Konnte Strompreis nicht abrufen. Abbruch.")
-        return
+    # 2. Die ENTSCHEIDUNGS-LOGIK (Hier kommt die Intelligenz rein)
+    # Dies ist ein einfaches Beispiel. Die Tuya-Entwickler können dies verfeinern.
+    
+    decision = "DO_NOTHING"
+    reason = "Standard-Entscheidung"
+    
+    # Summe der erwarteten Solarstrahlung für die nächsten 3 Stunden
+    next_3h_solar = sum(solar_forecast[0:3])
 
-    price = current_price_info.get('price_eur_per_kwh')
+    # Beispiel-Regel 1: Sehr billig laden
+    if grid_price <= 0.05 and soc < 95:
+        decision = "CHARGE_FROM_GRID"
+        reason = f"Netzpreis ist extrem niedrig ({grid_price:.4f} EUR/kWh)."
 
-    # --- 3. Zukünftige Logik ---
-    # Hier kommt deine Logik rein, um basierend auf dem Preis
-    # eine Entscheidung zu treffen und die Tuya-API aufzurufen.
-    #
-    # Beispiel:
-    # if price < 0.05:
-    #     print("Preis ist sehr niedrig. Sende Lade-Befehl an Tuya...")
-    #     # call_tuya_api(device_id, "charge")
-    # else:
-    #     print("Preis ist normal. Nichts zu tun.")
+    # Beispiel-Regel 2: Bei teurem Strom und voller Batterie entladen
+    elif grid_price >= 0.25 and soc > 20:
+        decision = "DISCHARGE_TO_HOUSE"
+        reason = f"Netzpreis ist hoch ({grid_price:.4f} EUR/kWh), Batterie wird genutzt."
+        
+    # Beispiel-Regel 3: Auf Solarstrom warten
+    elif soc < 80 and next_3h_solar > 300: # Wenn in den nächsten 3h viel Sonne kommt
+        decision = "WAIT_FOR_SOLAR"
+        reason = f"Es wird bald genug Solarstrom erwartet (Index: {next_3h_solar})."
 
-    print("Preis-Check erfolgreich beendet.")
+    # 3. Eine klare JSON-Antwort zurückgeben
+    return {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "input_soc_percent": soc,
+        "data": {
+            "grid_price_eur_per_kwh": grid_price,
+            "next_6h_solar_radiation_w_per_m2": solar_forecast
+        },
+        "decision": {
+            "action": decision,
+            "reason": reason
+        }
+    }
 
-
-if __name__ == "__main__":
-    main()
