@@ -1,10 +1,10 @@
 import os
 import requests
-import psycopg2 # Neue Bibliothek für PostgreSQL
 from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from datetime import datetime, timezone
 from pydantic import BaseModel
+import psycopg2
 
 # --- Konfiguration & Modelle ---
 
@@ -37,10 +37,13 @@ PRICE_THRESHOLD_LOW = float(get_config("PRICE_THRESHOLD_LOW", "0.05"))
 PRICE_THRESHOLD_HIGH = float(get_config("PRICE_THRESHOLD_HIGH", "0.25"))
 SOLAR_THRESHOLD_HIGH = int(get_config("SOLAR_THRESHOLD_HIGH", "300"))
 INTERNAL_API_KEY = get_config("INTERNAL_API_KEY", "ein-sehr-geheimes-passwort")
-DATABASE_URL = get_config("DATABASE_URL") # Diese Variable wird von Railway automatisch bereitgestellt!
+DATABASE_URL = get_config("DATABASE_URL")
+# NEU: Die Preiszone für aWATTar konfigurierbar machen
+AWATTAR_MARKET = get_config("AWATTAR_MARKET", "DE-LU")
+
 
 def setup_database():
-    """Erstellt die Tabelle, falls sie noch nicht existiert."""
+    # ... (Funktion bleibt unverändert)
     conn = None
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -65,16 +68,19 @@ def setup_database():
         if conn:
             conn.close()
 
-# Führe das DB-Setup beim Start der App einmal aus
 setup_database()
 
 async def get_api_key(api_key: str = Security(api_key_header)):
     if api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=403, detail="Ungültiger oder fehlender API-Schlüssel")
 
-# --- DATENABRUF-FUNKTIONEN (unverändert) ---
+# --- DATENABRUF-FUNKTIONEN ---
+
 def get_epex_spot_price():
-    api_url = 'https://api.awattar.de/v1/marketdata'
+    """Fragt den stündlichen EPEX Spot Preis für den konfigurierten Markt ab."""
+    # NEU: Wir fügen den 'market' Parameter zur URL hinzu.
+    api_url = f'https://api.awattar.de/v1/marketdata?market={AWATTAR_MARKET}'
+    print(f"Rufe Preise für Markt '{AWATTAR_MARKET}' ab von: {api_url}")
     try:
         response = requests.get(api_url, timeout=10)
         response.raise_for_status()
@@ -84,10 +90,14 @@ def get_epex_spot_price():
             start_time = datetime.fromtimestamp(price_point['start_timestamp'] / 1000, tz=timezone.utc)
             if start_time.hour == now_utc.hour and start_time.date() == now_utc.date():
                 return price_point['marketprice'] / 1000
+        print(f"WARNUNG: Konnte keinen aktuellen Preis für Markt {AWATTAR_MARKET} finden.")
         return None
-    except Exception: return None
+    except Exception as e:
+        print(f"Fehler bei aWATTar API: {e}")
+        return None
 
 def get_solar_forecast():
+    # ... (Funktion bleibt unverändert)
     api_url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&hourly=shortwave_radiation&forecast_days=1"
     try:
         response = requests.get(api_url, timeout=10)
@@ -97,20 +107,17 @@ def get_solar_forecast():
         return data['hourly']['shortwave_radiation'][now_hour : now_hour + 6]
     except Exception: return None
 
-# --- DER GESICHERTE API-ENDPUNKT (mit DB-Logging) ---
+# --- DER GESICHERTE API-ENDPUNKT ---
 
 @app.get("/entscheidung", response_model=DecisionResponse)
 async def get_charging_decision(soc: float, api_key: str = Security(get_api_key)):
+    # ... (Der Rest der Funktion bleibt komplett unverändert)
     if not (0.0 <= soc <= 100.0):
         raise HTTPException(status_code=400, detail="SoC muss zwischen 0 und 100 liegen.")
-
     grid_price = get_epex_spot_price()
     solar_forecast = get_solar_forecast()
-
     if grid_price is None or solar_forecast is None:
-        raise HTTPException(status_code=503, detail="Externe Daten konnten nicht abgerufen werden.")
-
-    # --- ENTSCHEIDUNGS-LOGIK (unverändert) ---
+        raise HTTPException(status_code=503, detail="Externe Daten (Strompreis/Wetter) konnten nicht abgerufen werden.")
     decision = "DO_NOTHING"
     reason = "Standard: Keine Aktion nötig."
     next_3h_solar = sum(solar_forecast[0:3])
@@ -130,8 +137,6 @@ async def get_charging_decision(soc: float, api_key: str = Security(get_api_key)
         elif grid_price >= PRICE_THRESHOLD_HIGH and soc > 20:
             decision = "DISCHARGE_TO_HOUSE"
             reason = f"Kosten sparen: Netzpreis ist hoch ({grid_price:.4f} EUR/kWh), Batterie wird genutzt."
-
-    # --- NEU: DATEN IN DIE DATENBANK SCHREIBEN ---
     conn = None
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -145,14 +150,11 @@ async def get_charging_decision(soc: float, api_key: str = Security(get_api_key)
         )
         conn.commit()
         cursor.close()
-        print("Entscheidung erfolgreich in der Datenbank protokolliert.")
     except Exception as e:
         print(f"Fehler beim Schreiben in die Datenbank: {e}")
     finally:
         if conn:
             conn.close()
-
-    # --- ANTWORT ZURÜCKGEBEN (unverändert) ---
     return {
         "timestamp_utc": datetime.now(timezone.utc),
         "input_soc_percent": soc,
