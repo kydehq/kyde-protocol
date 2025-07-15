@@ -10,6 +10,7 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
 from pydantic import ValidationError
 from optimisation_api.models import Decision
+from datetime import datetime, timezone 
 
 # --- Initialisierung ---
 try:
