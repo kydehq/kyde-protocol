@@ -36,14 +36,26 @@ Gib ausschließlich ein JSON-Objekt im Format {"action":"...", "reason":"..."} z
 """
 MAX_LLM_RUNTIME = 2.0  # seconds
 
-async def llm_decision(soc: float, grid_price: float, solar: list[float]) -> Decision | None:
+async def llm_decision(soc: float, price_forecast: list[dict], solar: list[float]) -> Decision | None:
     if not gemini_model:
         return None
 
+    # Bereite die Prognosen für den Prompt vor
+    price_str = "\\n".join([f"- {item['timestamp_utc'].strftime('%H:%M')}: {item['price_eur_kwh']:.4f} €" for item in price_forecast[:8]])
+    
+    # Finde den aktuellen Preis für den Prompt
+    now = datetime.now(timezone.utc)
+    current_price_item = next((item for item in price_forecast if item['timestamp_utc'].hour == now.hour), None)
+    current_price = current_price_item['price_eur_kwh'] if current_price_item else "N/A"
+
     user_prompt = (
-        f"Aktueller SoC: {soc:.1f}%\n"
-        f"Netzpreis: {grid_price:.4f} €/kWh\n"
-        f"Solarprognose 6h (W/m²): {solar}"
+        f"SITUATION:\\n"
+        f"- Aktueller Batteriestand (SoC): {soc:.1f}%\\n"
+        f"- Aktueller Netzpreis: {current_price:.4f} €/kWh\\n"
+        f"PROGNOSEN:\\n"
+        f"- Preisprognose (nächste 8h):\\n{price_str}\\n"
+        f"- Solarprognose (nächste 6h in W/m²): {solar}\\n\\n"
+        f"AUFGABE: Was ist die **jetzt** zu treffende, optimale Aktion?"
     )
     try:
         start = time.monotonic()
