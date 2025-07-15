@@ -1,9 +1,4 @@
-# ---------------------------------------------------------------------------
-# DATEI 4: optimisation_api/logic/llm_agent.py
-# ---------------------------------------------------------------------------
-# Das ist unser "Brain v1+" - der intelligente Agent, der Gemini nutzt.
-
-# Wir initialisieren den Gemini-Client jetzt "lazy", um Start-Abstürze zu verhindern.
+# Wir initialisieren den Gemini-Client jetzt "lazy" und mit verbessertem Fehler-Handling.
 
 import os
 import time
@@ -43,23 +38,30 @@ def initialize_gemini():
     if gemini_initialized:
         return
 
-    print("Initialisiere Gemini-Client zum ersten Mal...")
+    print("--- START: Initialisiere Gemini-Client ---")
+    # Wir fangen jetzt BaseException ab, um absolut alles zu erwischen, auch System-Level-Fehler.
     try:
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY Umgebungsvariable nicht gefunden.")
+            # Dieser Fehler sollte jetzt klar in den Logs erscheinen.
+            raise ValueError("FATAL: GOOGLE_API_KEY Umgebungsvariable wurde nicht gefunden oder ist leer.")
+        
+        print(f"API-Schlüssel gefunden, beginnt mit: {api_key[:4]}...")
         
         genai.configure(api_key=api_key)
         json_cfg = GenerationConfig(response_mime_type="application/json")
         gemini_model = genai.GenerativeModel("gemini-1.5-flash", generation_config=json_cfg)
-        print("Gemini-Client erfolgreich initialisiert.")
-    except Exception as exc:
-        print(f"FATAL: Gemini-Initialisierung fehlgeschlagen: {exc}")
+        print("--- ERFOLG: Gemini-Client erfolgreich initialisiert. ---")
+    except BaseException as exc: # Fängt absolut alles ab
+        print(f"--- FATAL: Gemini-Initialisierung fehlgeschlagen. Der Prozess stürzt möglicherweise ab. ---")
+        print(f"Fehlertyp: {type(exc).__name__}")
+        print(f"Fehlermeldung: {exc}")
         # Wir setzen das Modell auf None, damit der Rest der App nicht abstürzt
         gemini_model = None
     finally:
         # Wir markieren die Initialisierung als abgeschlossen, um wiederholte Versuche zu vermeiden.
         gemini_initialized = True
+        print("--- ENDE: Gemini-Initialisierungsversuch abgeschlossen. ---")
 
 
 async def llm_decision(soc: float, price_forecast: list[dict], solar: list[float]) -> Decision | None:
@@ -88,6 +90,7 @@ async def llm_decision(soc: float, price_forecast: list[dict], solar: list[float
         f"AUFGABE: Was ist die **jetzt** zu treffende, optimale Aktion?"
     )
     try:
+        print("Sende Anfrage an Gemini...")
         start = time.monotonic()
         resp = await gemini_model.generate_content_async([SYSTEM_PROMPT, user_prompt])
         if time.monotonic() - start > MAX_LLM_RUNTIME:
@@ -95,6 +98,7 @@ async def llm_decision(soc: float, price_forecast: list[dict], solar: list[float
         
         cleaned_text = resp.text.strip().replace("```json", "").replace("```", "").strip()
         dec = Decision.parse_obj(json.loads(cleaned_text))
+        print("Valide JSON-Antwort von Gemini erhalten.")
         return dec
     except Exception as exc:
         print(f"LLM error während der Ausführung: {exc}")
