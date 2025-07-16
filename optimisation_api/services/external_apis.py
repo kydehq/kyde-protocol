@@ -47,7 +47,7 @@ def get_solar_forecast(hours: int = 6) -> list[float] | None:
     """
     lat = os.environ.get("LATITUDE", "50.1109")
     lon = os.environ.get("LONGITUDE", "8.6821")
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=shortwave_radiation&forecast_days=1"
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=shortwave_radiation&forecast_days=1&timezone=UTC"
     try:
         response = requests.get(url, timeout=5)
         response.raise_for_status()
