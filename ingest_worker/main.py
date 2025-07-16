@@ -19,3 +19,23 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+    # Fester Vergleichspreis aus der Umgebung holen
+FIXED_PRICE = float(os.environ.get("DEFAULT_GRID_PRICE_EUR_KWH", "0.32"))
+
+def calculate_and_save_savings():
+    # 1. Tatsächliche Verbrauchsdaten der letzten Stunde vom Shelly holen
+    last_hour_data = shelly.get_data() # z.B. { consumption: 1.5, from_solar: 1.0, from_battery: 0.5 }
+
+    # 2. Kosten OHNE System berechnen
+    cost_without_system = last_hour_data.consumption * FIXED_PRICE # 1.5 kWh * 0.32€
+
+    # 3. Kosten MIT System berechnen
+    # (Annahme: Solar ist gratis, Batterie wurde für 0.12€ geladen)
+    cost_with_system = (0 * last_hour_data.from_solar) + (0.12 * last_hour_data.from_battery)
+
+    # 4. Ersparnis dieser Stunde berechnen und zur Tagesersparnis addieren
+    hourly_saving = cost_without_system - cost_with_system
+    database.add_to_todays_savings(hourly_saving)

@@ -16,3 +16,15 @@ class Action(str, Enum):
 class Decision(BaseModel):
     action: Action
     reason: str
+
+# Ein Modell für die Ersparnis-Daten
+class Savings(BaseModel):
+    today_eur: float
+    trend: str # 'up', 'down', or 'stable'
+
+# Ein übergeordnetes Antwort-Modell, das alles enthält
+class ApiResponse(BaseModel):
+    decision: Decision
+    savings: Savings
+    # Hier könnten später weitere Daten hinzukommen, z.B. Batteriestatus
+    # battery_soc: float
