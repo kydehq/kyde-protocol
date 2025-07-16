@@ -6,16 +6,20 @@
 
 # Wir holen jetzt die komplette Preisprognose, nicht nur den aktuellen Preis.
 
+# KORRIGIERT: Markdown aus URLs entfernt.
+# ---------------------------------------------------------------------------
 import requests
 from datetime import datetime, timezone
+import os
 
 def get_epex_spot_forecast() -> list[dict] | None:
     """
     Returns a list of all available day-ahead prices for today and tomorrow.
     """
-    url = "[https://api.awattar.de/v1/marketdata](https://api.awattar.de/v1/marketdata)"
+    # KORREKTUR: Markdown-Formatierung entfernt
+    url = "https://api.awattar.de/v1/marketdata"
     try:
-        response = requests.get(url, timeout=5) # Timeout leicht reduziert
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
         market_data = response.json()["data"]
         
@@ -34,16 +38,15 @@ def get_solar_forecast(hours: int = 6) -> list[float] | None:
     """
     Returns a list of solar radiation forecasts for the next hours.
     """
-    # Diese Werte sollten idealerweise auch aus Umgebungsvariablen kommen.
     lat = os.environ.get("LATITUDE", "50.1109")
     lon = os.environ.get("LONGITUDE", "8.6821")
-    url = f"[https://api.open-meteo.com/v1/forecast?latitude=](https://api.open-meteo.com/v1/forecast?latitude=){lat}&longitude={lon}&hourly=shortwave_radiation&forecast_days=1"
+    # KORREKTUR: Markdown-Formatierung entfernt
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=shortwave_radiation&forecast_days=1"
     try:
         response = requests.get(url, timeout=5)
         response.raise_for_status()
         data = response.json()
         now_hour = datetime.now(timezone.utc).hour
-        # Stellt sicher, dass die Indizes nicht außerhalb des Bereichs liegen
         return data["hourly"]["shortwave_radiation"][now_hour : now_hour + hours]
     except requests.exceptions.RequestException as e:
         print(f"FEHLER: Open-Meteo API-Anfrage fehlgeschlagen: {e}")
