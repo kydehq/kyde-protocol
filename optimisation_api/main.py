@@ -4,6 +4,8 @@
 # ---------------------------------------------------------------------------
 # VERBESSERT: Absturz durch ungültige LAT/LON Umgebungsvariablen verhindert
 # ---------------------------------------------------------------------------
+# FINALER FIX: Hyper-resiliente Prüfung für Solarprognose-Daten
+# ---------------------------------------------------------------------------
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
 from optimisation_api.models import Decision, Action
@@ -63,7 +65,6 @@ async def get_decision(soc: float):
     current_price = current_price_item['price_eur_kwh']
 
     # 3. Solardaten aufbereiten (auf 0 setzen, wenn keine Sonne scheint)
-    # VERBESSERUNG: Fängt ungültige LAT/LON-Werte ab, um einen Absturz zu verhindern.
     try:
         lat = float(os.environ.get("LATITUDE", "50.1109"))
         lon = float(os.environ.get("LONGITUDE", "8.6821"))
@@ -72,7 +73,13 @@ async def get_decision(soc: float):
         lat = 50.1109
         lon = 8.6821
         
-    solar_forecast = solar_forecast_raw if daylight_checker.is_daylight(lat, lon) else [0.0] * len(solar_forecast_raw)
+    # FINALER FIX: Stellt sicher, dass solar_forecast_raw eine Liste ist, bevor len() aufgerufen wird.
+    solar_forecast = [] 
+    if isinstance(solar_forecast_raw, list):
+        solar_forecast = solar_forecast_raw if daylight_checker.is_daylight(lat, lon) else [0.0] * len(solar_forecast_raw)
+    else:
+        print(f"WARNUNG: solar_forecast_raw war keine Liste (Typ: {type(solar_forecast_raw)}). Solarprognose wird ignoriert.")
+        # solar_forecast bleibt eine leere Liste, was von den Folgeschritten sicher gehandhabt wird.
 
     # 4. Schnelle, regelbasierte Entscheidung versuchen
     action, reason = rules_engine.fast_rules(soc, current_price, price_forecast, solar_forecast)
@@ -105,4 +112,5 @@ async def health_check():
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "openai_client_available": llm_agent.openai_client is not None
     }
+
 
