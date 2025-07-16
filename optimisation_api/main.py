@@ -19,7 +19,7 @@ app = FastAPI()
 # --- API-Schlüssel-Sicherheit ---
 API_KEY_NAME = "X-API-KEY"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
-INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY") or os.environ.get("XPASSWORD") or "ein-sehr-geheimes-passwort"
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
 
 async def get_api_key(api_key_header: str = Security(api_key_header)):
     """Überprüft den übergebenen API-Schlüssel."""
