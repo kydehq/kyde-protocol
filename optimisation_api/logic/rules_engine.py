@@ -31,7 +31,7 @@ def fast_rules(soc: float, current_price: float, price_forecast: list[dict], sol
     max_solar_forecast = max(solar, default=0)
     if max_solar_forecast > 300 and soc < STRATEGIC_MAX_SOC:
         # VERBESSERTE BEGRÜNDUNG: Zeigt jetzt den konkreten Wert der Solarprognose an.
-        return Action.WAIT_FOR_SOLAR, f"Regel: Solarprognose ({max_solar_forecast:.0f} W/m²) ist hoch & Batterie <{STRATEGIC_MAX_SOC}%."
+        return Action.WAIT_FOR_SOLAR, f"Regel: Solarprognose ({max_solar_forecast:.0f} W/m²) ist hoch & die Batterie noch nicht voll <{STRATEGIC_MAX_SOC}%."
 
     # Regel zum Entladen bei hohen Preisen: Gilt nur, wenn wir über dem strategischen Minimum sind.
     if soc > STRATEGIC_MIN_SOC and current_price > 0.28:
