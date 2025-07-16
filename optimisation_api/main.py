@@ -2,6 +2,8 @@
 # ---------------------------------------------------------------------------
 # VERBESSERT: API-Schlüssel-Authentifizierung hinzugefügt
 # ---------------------------------------------------------------------------
+# VERBESSERT: Absturz durch ungültige LAT/LON Umgebungsvariablen verhindert
+# ---------------------------------------------------------------------------
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
 from optimisation_api.models import Decision, Action
@@ -61,8 +63,15 @@ async def get_decision(soc: float):
     current_price = current_price_item['price_eur_kwh']
 
     # 3. Solardaten aufbereiten (auf 0 setzen, wenn keine Sonne scheint)
-    lat = float(os.environ.get("LATITUDE", "50.1109"))
-    lon = float(os.environ.get("LONGITUDE", "8.6821"))
+    # VERBESSERUNG: Fängt ungültige LAT/LON-Werte ab, um einen Absturz zu verhindern.
+    try:
+        lat = float(os.environ.get("LATITUDE", "50.1109"))
+        lon = float(os.environ.get("LONGITUDE", "8.6821"))
+    except (ValueError, TypeError):
+        print("WARNUNG: LATITUDE/LONGITUDE Umgebungsvariablen sind ungültig. Nutze Standardwerte für Frankfurt.")
+        lat = 50.1109
+        lon = 8.6821
+        
     solar_forecast = solar_forecast_raw if daylight_checker.is_daylight(lat, lon) else [0.0] * len(solar_forecast_raw)
 
     # 4. Schnelle, regelbasierte Entscheidung versuchen
