@@ -5,6 +5,8 @@
 
 # Die Regeln basieren nicht mehr auf festen Schwellen, sondern auf dem Preis-Kontext.
 
+# VERBESSERT: Die Begründung für die Solar-Regel ist jetzt klarer.
+# ===========================================================================
 import os
 from optimisation_api.models import Action
 from datetime import datetime, timezone
@@ -26,8 +28,10 @@ def fast_rules(soc: float, current_price: float, price_forecast: list[dict], sol
 
     # 4. Bestehende Regeln anpassen, um die oberen Puffer zu respektieren
     # Regel zum Warten auf Solar: Gilt nur, wenn wir unter dem strategischen Maximum sind.
-    if max(solar, default=0) > 300 and soc < STRATEGIC_MAX_SOC:
-        return Action.WAIT_FOR_SOLAR, f"Regel: Hohe Solarprognose & Batterie <{STRATEGIC_MAX_SOC}%."
+    max_solar_forecast = max(solar, default=0)
+    if max_solar_forecast > 300 and soc < STRATEGIC_MAX_SOC:
+        # VERBESSERTE BEGRÜNDUNG: Zeigt jetzt den konkreten Wert der Solarprognose an.
+        return Action.WAIT_FOR_SOLAR, f"Regel: Solarprognose ({max_solar_forecast:.0f} W/m²) ist hoch & Batterie <{STRATEGIC_MAX_SOC}%."
 
     # Regel zum Entladen bei hohen Preisen: Gilt nur, wenn wir über dem strategischen Minimum sind.
     if soc > STRATEGIC_MIN_SOC and current_price > 0.28:
@@ -49,5 +53,3 @@ def find_cheapest_hours(price_forecast: list[dict], num_hours: int) -> list[date
         return []
     sorted_hours = sorted(future_prices, key=lambda x: x['price_eur_kwh'])
     return [item['timestamp_utc'] for item in sorted_hours[:num_hours]]
-
-
