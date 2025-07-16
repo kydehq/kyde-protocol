@@ -16,5 +16,3 @@ class Action(str, Enum):
 class Decision(BaseModel):
     action: Action
     reason: str
-
-# Hier könnten später auch die SQLAlchemy-Modelle für die Datenbank hin.
