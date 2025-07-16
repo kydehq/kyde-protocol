@@ -1,6 +1,9 @@
 # Angepasst: Health-Check prüft jetzt den OpenAI-Client
 # ---------------------------------------------------------------------------
-from fastapi import FastAPI, HTTPException
+# VERBESSERT: API-Schlüssel-Authentifizierung hinzugefügt
+# ---------------------------------------------------------------------------
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security.api_key import APIKeyHeader
 from optimisation_api.models import Decision, Action
 from optimisation_api.services import external_apis, daylight_checker
 from optimisation_api.logic import rules_engine, llm_agent
@@ -9,6 +12,27 @@ import os
 
 app = FastAPI()
 
+# --- API-Schlüssel-Sicherheit ---
+API_KEY_NAME = "X-API-KEY"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    """Überprüft den übergebenen API-Schlüssel."""
+    if not INTERNAL_API_KEY:
+        print("WARNUNG: INTERNAL_API_KEY ist nicht gesetzt. API-Anfragen werden blockiert.")
+        raise HTTPException(status_code=500, detail="Server ist nicht korrekt konfiguriert.")
+
+    if api_key_header == INTERNAL_API_KEY:
+        return api_key_header
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Ungültiger oder fehlender API-Schlüssel",
+        )
+# --- Ende API-Schlüssel-Sicherheit ---
+
+
 @app.on_event("startup")
 async def startup_event():
     """
@@ -16,7 +40,7 @@ async def startup_event():
     """
     llm_agent.initialize_openai()
 
-@app.get("/entscheidung", response_model=Decision)
+@app.get("/entscheidung", response_model=Decision, dependencies=[Depends(get_api_key)])
 async def get_decision(soc: float):
     if not (0.0 <= soc <= 100.0):
         raise HTTPException(status_code=400, detail="State of Charge (soc) muss zwischen 0 und 100 liegen.")
@@ -25,8 +49,8 @@ async def get_decision(soc: float):
     price_forecast = external_apis.get_epex_spot_forecast()
     solar_forecast_raw = external_apis.get_solar_forecast()
     
-    if not price_forecast or not solar_forecast_raw:
-        raise HTTPException(status_code=503, detail="Externe Prognosedaten sind aktuell nicht verfügbar.")
+    if price_forecast is None or solar_forecast_raw is None:
+        raise HTTPException(status_code=503, detail="Externe Prognosedaten sind aktuell nicht verfügbar. Bitte prüfen Sie die Logs für Details.")
 
     # 2. Aktuelle Daten extrahieren
     now = datetime.now(timezone.utc)
@@ -65,9 +89,11 @@ async def get_decision(soc: float):
 async def health_check():
     """
     Ein einfacher Endpunkt, um den Status des Dienstes und die OpenAI-Verbindung zu prüfen.
+    Dieser Endpunkt ist NICHT durch den API-Schlüssel geschützt.
     """
     return {
         "status": "ok", 
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "openai_client_available": llm_agent.openai_client is not None
     }
+
