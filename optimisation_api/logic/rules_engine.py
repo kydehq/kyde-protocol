@@ -30,8 +30,6 @@ def fast_rules(soc: float, current_price: float, price_forecast: list[dict], sol
             return Action.CHARGE_FROM_GRID, f"Regel: Günstigste Stunde (Preis: {current_price:.2f}€) wird zum Laden genutzt."
 
     # Regel 2: Hohe Solarprognose und Batterie nicht voll? Warten.
-    now_hour = datetime.now(timezone.utc).hour
-    cloud = data["cloud_cover"][now_hour : now_hour + 6]
     if max(solar, default=0) > 300 and soc < 85:
         return Action.WAIT_FOR_SOLAR, f"Regel: Hohe Solarprognose ({max(solar):.0f} W/m²) & Batterie <85%."
 
