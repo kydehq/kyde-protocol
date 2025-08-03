@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 # VERBESSERT: Fehlerbehandlung erweitert, um Abstürze zu verhindern.
 # ---------------------------------------------------------------------------
-# KORRIGIERT: Funktion get_solar_forecast akzeptiert jetzt lat und lon
+# KORRIGIERT: Funktion get_solar_forecast akzeptiert jetzt lat und lon und ist auf münchen eingestellt.
 # ---------------------------------------------------------------------------
 import httpx
 from datetime import datetime, timezone
