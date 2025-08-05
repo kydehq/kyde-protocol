@@ -101,7 +101,7 @@ class UserRegistrationPayload(BaseModel):
     address: str
 
 # API-Endpunkt, um einen neuen Nutzer zu registrieren.
-@app.post("/users/register", status_code=201, tags=["Users"])
+@app.post("/users/register/", status_code=201, tags=["Users"])
 async def register_user(payload: UserRegistrationPayload):
     """
     Registriert einen neuen Nutzer und legt ihn und seine Wohnung im Knowledge Graph an.
