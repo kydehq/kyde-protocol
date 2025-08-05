@@ -1,61 +1,70 @@
-# Dies ist das Gehirn deines Beraters. Er nutzt die anderen Module,
-# um eine umfassende Empfehlung zu erstellen.
-# ---------------------------------------------------------------------------
-
-# from . import subsidy_engine, product_catalog, scoring_service
-# from ..database import db_client # Beispiel für Datenbank-Import
+# advisory_services/recommendation_service.py
+# Importiere deine neue Query-Funktion
+from database.neo4j_client import execute_query
+# ... andere Imports
 
 async def generate_recommendations_for_user(user_id: str) -> list[dict]:
     """
-    Erstellt eine Liste von personalisierten Empfehlungen für einen Nutzer.
-    Diese Funktion wird z.B. einmal pro Nacht oder auf Anfrage vom Dashboard ausgeführt.
+    Erstellt Empfehlungen basierend auf den Daten im Knowledge Graph.
     """
     print(f"INFO: Starte Erstellung von Empfehlungen für Nutzer {user_id}...")
     
-    # --- Schritt 1: Historische Daten des Nutzers laden ---
-    # Hier würdest du die Verbrauchsdaten der letzten Monate aus deiner
-    # Datenbank laden (z.B. stündlicher Stromverbrauch, Heizenergie etc.).
-    # historical_data = await db_client.get_user_history(user_id)
-    print("-> Schritt 1/5: Lade historische Verbrauchsdaten...")
+    # --- Schritt 1 & 2: Lade Nutzerdaten und identifiziere Stromfresser aus dem Graphen ---
+    # Diese eine Cypher-Query ersetzt mehrere SQL-Abfragen!
+    query = """
+    MATCH (u:User {userId: $userId})-[:OWNS]->(a:Apartment)-[:CONTAINS]->(d:Device)
+    WHERE d.efficiency_class IN ['C', 'D', 'E', 'F', 'G'] OR d.avg_consumption_kwh > 1.0
+    RETURN d.type as device_type, d.model as device_model, d.deviceId as device_id
+    """
+    print("-> Schritt 1+2/5: Finde ineffiziente Geräte im Knowledge Graph...")
+    inefficient_devices = await execute_query(query, {"userId": user_id})
 
-    # --- Schritt 2: Mustererkennung -> "Stromfresser" identifizieren ---
-    # Hier analysiert eine Funktion die Daten, um Geräte mit hohem Verbrauch
-    # oder ineffizientem Verhalten zu finden.
-    # z.B. eine Waschmaschine, die immer nachts läuft, aber sehr viel Strom zieht.
-    # inefficient_devices = find_inefficient_patterns(historical_data)
-    print("-> Schritt 2/5: Analysiere Daten und finde Stromfresser...")
-    
+    if not inefficient_devices:
+        print(f"INFO: Keine ineffizienten Geräte für Nutzer {user_id} gefunden.")
+        return []
+
     recommendations = []
-    # Beispiel-Schleife: Gehe alle gefundenen "Problemgeräte" durch
-    # for device in inefficient_devices:
+    for device in inefficient_devices:
+        print(f"-> Verarbeite ineffizientes Gerät: {device['device_type']} ({device['device_model']})")
 
-    # --- Schritt 3: Passende Ersatz-Hardware finden ---
-    # Für jedes Problemgerät wird im Produktkatalog nach einer modernen,
-    # effizienten Alternative gesucht.
-    # replacement_product = await product_catalog.find_replacement(device.type)
-    print("-> Schritt 3/5: Suche effiziente Ersatz-Hardware im Produktkatalog...")
+        # --- Schritt 3: Passende Ersatz-Hardware finden (deine Logik bleibt gleich) ---
+        print("-> Schritt 3/5: Suche effiziente Ersatz-Hardware im Produktkatalog...")
+        replacement_product = await product_catalog.find_replacement(device['device_type'])
 
-    # --- Schritt 4: Förderungen und Finanzierung prüfen ---
-    # Mit den Nutzerdaten und dem neuen Produkt werden die anderen Services abgefragt.
-    # user_profile = await db_client.get_user_profile(user_id) # z.B. für Einkommensgrenzen
-    # subsidy = await subsidy_engine.get_subsidies(replacement_product, user_profile)
-    # energy_score = await scoring_service.calculate_score(user_id)
-    # financing_offer = await get_financing_offer(replacement_product, subsidy, energy_score)
-    print("-> Schritt 4/5: Prüfe Förderungen und Finanzierungsoptionen...")
+        # --- Schritt 4: Förderungen und Finanzierung prüfen (deine Logik bleibt gleich) ---
+        print("-> Schritt 4/5: Prüfe Förderungen und Finanzierungsoptionen...")
+        # Hier könntest du sogar User-Profil-Daten aus dem Graphen holen
+        # user_profile = await execute_query("MATCH (u:User {userId: $userId}) RETURN u", {"userId": user_id})
+        # subsidy = await subsidy_engine.get_subsidies(replacement_product, user_profile[0]['u'])
+        # ...
 
-    # --- Schritt 5: Empfehlung zusammenbauen ---
-    # Alle Informationen werden zu einer verständlichen Empfehlung kombiniert.
-    # final_recommendation = {
-    #     "title": f"Tausche deine alte {device.type}!",
-    #     "description": f"Deine aktuelle {device.type} verbraucht überdurchschnittlich viel Strom. Wir empfehlen die '{replacement_product.name}'.",
-    #     "savings_potential_eur_per_year": 120,
-    #     "amortization_in_years": 4.5,
-    #     "subsidy_details": subsidy,
-    #     "financing_details": financing_offer
-    # }
-    # recommendations.append(final_recommendation)
-    print("-> Schritt 5/5: Stelle finale Empfehlung zusammen...")
+        # --- Schritt 5: Empfehlung zusammenbauen und mit dem Graphen verknüpfen! ---
+        # Dies ist der entscheidende Schritt zum Aufbau von Wissen:
+        final_recommendation = {
+            "title": f"Tausche deine alte {device['device_type']}!",
+            # ... andere Felder
+        }
+
+        # Jetzt speichern wir die Empfehlung im Graphen und verbinden sie mit dem Nutzer und dem Gerät
+        create_recommendation_query = """
+        MATCH (u:User {userId: $userId})
+        MATCH (d:Device {deviceId: $deviceId})
+        CREATE (r:Recommendation {
+            recommendationId: randomUUID(),
+            title: $title,
+            createdAt: datetime(),
+            status: 'new'
+        })
+        CREATE (u)-[:RECEIVED]->(r)
+        CREATE (r)-[:SUGGESTS_REPLACEMENT_FOR]->(d)
+        RETURN r.recommendationId as id
+        """
+        await execute_query(create_recommendation_query, {
+            "userId": user_id,
+            "deviceId": device['device_id'],
+            "title": final_recommendation['title']
+        })
+        print("-> Schritt 5/5: Empfehlung erstellt und im Knowledge Graph gespeichert.")
+        recommendations.append(final_recommendation)
     
-    print(f"INFO: Erstellung von Empfehlungen für Nutzer {user_id} abgeschlossen.")
-    # Vorerst geben wir eine leere Liste zurück
     return recommendations

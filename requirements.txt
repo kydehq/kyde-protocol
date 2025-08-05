@@ -8,3 +8,4 @@ sqlalchemy
 httpx
 psycopg2-binary
 astral
+neo4j

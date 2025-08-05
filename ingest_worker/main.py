@@ -4,6 +4,31 @@
 # Dies wäre ein separater Dienst, der als Cron-Job läuft.
 # Seine einzige Aufgabe: Daten vom Shelly holen und in die Datenbank schreiben.
 
+from database.neo4j_client import execute_query
+
+async def create_or_update_device_in_graph(user_id, device_data):
+    """
+    Erstellt einen Geräteknoten in Neo4j und verbindet ihn mit dem Nutzer/Apartment.
+    MERGE sorgt dafür, dass ein Gerät nicht doppelt angelegt wird.
+    """
+    query = """
+    MATCH (u:User {userId: $userId})-[:OWNS]->(a:Apartment)
+    MERGE (d:Device {deviceId: $deviceId})
+    ON CREATE SET
+        d.type = $type,
+        d.model = $model,
+        d.firstSeen = datetime()
+    ON MATCH SET
+        d.lastSeen = datetime()
+    MERGE (a)-[:CONTAINS]->(d)
+    """
+    await execute_query(query, {
+        "userId": user_id,
+        "deviceId": device_data['id'],
+        "type": device_data['type'],
+        "model": device_data['model_name']
+    })
+
 import time
 # from collectors import shelly_collector
 # from database import timescaledb_writer
