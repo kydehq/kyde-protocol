@@ -15,7 +15,12 @@ from optimisation_api.models import ApiResponse, Decision, Savings, Action # Mod
 from optimisation_api.services import external_apis, daylight_checker
 from optimisation_api.logic import rules_engine, llm_agent
 from datetime import datetime, timezone
+from pydantic import BaseModel
+from database.neo4j_client import execute_query # Unseren Neo4j-Helfer importieren
+
 import os
+
+from database.neo4j_client import neo4j_client
 
 app = FastAPI()
 
@@ -31,6 +36,11 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
 @app.on_event("startup")
 async def startup_event():
     await llm_agent.initialize_openai()
+    await neo4j_client.connect() 
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await neo4j_client.close() # <-- HINZUFÜGEN
 
 # Der Endpunkt gibt jetzt das übergeordnete `ApiResponse`-Modell zurück
 @app.get("/entscheidung", response_model=ApiResponse, dependencies=[Depends(get_api_key)])
@@ -83,3 +93,46 @@ async def get_decision(soc: float, lat: float = 50.1109, lon: float = 8.6821):
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+ --- Füge dieses Pydantic-Modell hinzu ---
+# Es definiert, welche Daten wir für eine Registrierung erwarten.
+class UserRegistrationPayload(BaseModel):
+    username: str
+    email: str
+    address: str
+    # Später könntest du hier mehr Details hinzufügen
+    # lat: float
+    # lon: float
+
+# --- Füge diesen neuen API-Endpunkt hinzu ---
+@app.post("/users/register", status_code=201)
+async def register_user(payload: UserRegistrationPayload):
+    """
+    Registriert einen neuen Nutzer und legt ihn und seine Wohnung im Knowledge Graph an.
+    """
+    print(f"INFO: Registriere neuen Nutzer '{payload.username}' mit Adresse '{payload.address}'...")
+
+    # Eine einzige, atomare Transaktion, um Nutzer und Wohnung zu erstellen und zu verbinden.
+    # MERGE verhindert, dass ein Nutzer mit derselben E-Mail doppelt angelegt wird.
+    query = """
+    MERGE (u:User {email: $email})
+    ON CREATE SET
+        u.userId = randomUUID(),
+        u.username = $username,
+        u.createdAt = datetime()
+    CREATE (a:Apartment {
+        apartmentId: randomUUID(),
+        address: $address
+    })
+    CREATE (u)-[:OWNS]->(a)
+    RETURN u.userId as userId, a.apartmentId as apartmentId
+    """
+    
+    try:
+        result = await execute_query(query, payload.dict())
+        new_ids = result[0]
+        print(f"ERFOLG: Nutzer mit ID {new_ids['userId']} und Wohnung {new_ids['apartmentId']} in Neo4j erstellt.")
+        return {"message": "User registered successfully", "data": new_ids}
+    except Exception as e:
+        print(f"FEHLER: Nutzer-Registrierung in Neo4j fehlgeschlagen: {e}")
+        raise HTTPException(status_code=500, detail="Could not write to knowledge graph.")
