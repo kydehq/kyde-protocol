@@ -16,11 +16,11 @@ from optimisation_api.services import external_apis, daylight_checker
 from optimisation_api.logic import rules_engine, llm_agent
 from datetime import datetime, timezone
 from pydantic import BaseModel
-from database.neo4j_client import execute_query # Unseren Neo4j-Helfer importieren
+from database.neo4j_client import neo4j_client, execute_query
 
 import os
 
-from database.neo4j_client import neo4j_client
+
 
 app = FastAPI()
 
