@@ -94,18 +94,14 @@ async def get_decision(soc: float, lat: float = 50.1109, lon: float = 8.6821):
 async def health_check():
     return {"status": "ok"}
 
- --- Füge dieses Pydantic-Modell hinzu ---
-# Es definiert, welche Daten wir für eine Registrierung erwarten.
+# Pydantic-Modell, das die Daten für eine Registrierung definiert.
 class UserRegistrationPayload(BaseModel):
     username: str
     email: str
     address: str
-    # Später könntest du hier mehr Details hinzufügen
-    # lat: float
-    # lon: float
 
-# --- Füge diesen neuen API-Endpunkt hinzu ---
-@app.post("/users/register", status_code=201)
+# API-Endpunkt, um einen neuen Nutzer zu registrieren.
+@app.post("/users/register", status_code=201, tags=["Users"])
 async def register_user(payload: UserRegistrationPayload):
     """
     Registriert einen neuen Nutzer und legt ihn und seine Wohnung im Knowledge Graph an.
@@ -130,9 +126,26 @@ async def register_user(payload: UserRegistrationPayload):
     
     try:
         result = await execute_query(query, payload.dict())
+        if not result:
+             # Dieser Fall kann eintreten, wenn der Nutzer bereits existierte
+             # und MERGE nur gematcht, aber nichts erstellt hat. Wir müssen das abfangen.
+             existing_user_query = "MATCH (u:User {email: $email}) RETURN u.userId as userId"
+             existing_user = await execute_query(existing_user_query, {"email": payload.email})
+             raise HTTPException(
+                 status_code=409, # 409 Conflict ist passender als 500
+                 detail=f"User with this email already exists with ID: {existing_user[0]['userId']}"
+             )
+
         new_ids = result[0]
         print(f"ERFOLG: Nutzer mit ID {new_ids['userId']} und Wohnung {new_ids['apartmentId']} in Neo4j erstellt.")
         return {"message": "User registered successfully", "data": new_ids}
+    except HTTPException as http_exc:
+        # Die HTTPException von oben direkt weiterleiten
+        raise http_exc
     except Exception as e:
         print(f"FEHLER: Nutzer-Registrierung in Neo4j fehlgeschlagen: {e}")
         raise HTTPException(status_code=500, detail="Could not write to knowledge graph.")
+
+#
+# ^^^ HIER ENDET DER KORRIGIERTE BLOCK ^^^
+#
