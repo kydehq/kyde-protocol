@@ -101,7 +101,7 @@ class UserRegistrationPayload(BaseModel):
     address: str
 
 # API-Endpunkt, um einen neuen Nutzer zu registrieren.
-@app.post("/users/register/", status_code=201, tags=["Users"])
+@app.post("/users/register", status_code=201, tags=["Users"])
 async def register_user(payload: UserRegistrationPayload):
     """
     Registriert einen neuen Nutzer und legt ihn und seine Wohnung im Knowledge Graph an.
@@ -148,27 +148,4 @@ async def register_user(payload: UserRegistrationPayload):
 
 #
 # ^^^ HIER ENDET DER KORRIGIERTE BLOCK ^^^
-#
-
-#
-# vvv DEBUGGING-CODE HINZUFÜGEN vvv
-#
-@app.post("/testpost")
-async def handle_test_post():
-    """
-    Ein extrem simpler Endpunkt, um zu sehen, ob POST-Anfragen überhaupt ankommen.
-    """
-    print("!!! ERFOLG: POST-Anfrage an /testpost erhalten !!!")
-    return {"message": "POST request successful"}
-
-@app.get("/testpost")
-async def handle_test_get():
-    """
-    Der passende GET-Endpunkt, um den Unterschied zu sehen.
-    """
-    print("--- INFO: GET-Anfrage an /testpost erhalten ---")
-    return {"message": "GET request successful"}
-
-#
-# ^^^ DEBUGGING-CODE ENDE ^^^
 #
